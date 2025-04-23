@@ -391,75 +391,108 @@ stopNginx() {
 
 getCert() {
     mkdir -p /etc/trojan-go
-    if [[ -z ${CERT_FILE+x} ]]; then
-        stopNginx
-        systemctl stop trojan-go
-        sleep 2
-        
-        # 检查80端口是否被占用
-        Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
-        if [ -n "$Port80" ]; then
-            process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
-            colorEcho $RED "==========================================================="
-            colorEcho $RED "检测到80端口被占用，占用进程为：${process80}，本次安装结束"
-            colorEcho $RED "==========================================================="
-            exit 1
-        fi
-
-        # 添加临时80端口防火墙规则
-        iptables -I INPUT -p tcp --dport 80 -j ACCEPT
-        iptables -I INPUT -p tcp --dport 443 -j ACCEPT
-
-        $CMD_INSTALL socat openssl
-        if [[ "$PMT" = "yum" ]]; then
-            $CMD_INSTALL cronie
-            systemctl start crond
-            systemctl enable crond
+    
+    # 定义证书文件路径
+    CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
+    KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
+    
+    # 检查是否已有有效证书
+    if [[ -f $CERT_FILE && -f $KEY_FILE ]]; then
+        # 检查证书有效期（至少还有7天有效期）
+        if openssl x509 -checkend 604800 -noout -in $CERT_FILE; then
+            colorEcho $BLUE " 检测到有效证书，直接使用现有证书"
+            return 0
         else
-            $CMD_INSTALL cron
-            systemctl start cron
-            systemctl enable cron
+            colorEcho $YELLOW " 检测到证书即将过期，重新申请证书"
+            rm -f $CERT_FILE $KEY_FILE
         fi
-        
-        # 安装acme.sh
+    fi
+    
+    # 检查是否有用户提供的证书
+    if [[ -f ~/trojan-go.pem && -f ~/trojan-go.key ]]; then
+        colorEcho $GREEN " 检测到用户提供的证书，将使用其部署"
+        cp ~/trojan-go.pem $CERT_FILE
+        cp ~/trojan-go.key $KEY_FILE
+        chmod 600 $CERT_FILE $KEY_FILE
+        return 0
+    fi
+
+    # 没有有效证书，开始申请流程
+    colorEcho $BLUE " 开始申请SSL证书..."
+    
+    stopNginx
+    systemctl stop trojan-go
+    sleep 2
+    
+    # 检查80端口是否被占用
+    Port80=`netstat -tlpn | awk -F '[: ]+' '$1=="tcp"{print $5}' | grep -w 80`
+    if [ -n "$Port80" ]; then
+        process80=`netstat -tlpn | awk -F '[: ]+' '$5=="80"{print $9}'`
+        colorEcho $RED "==========================================================="
+        colorEcho $RED "检测到80端口被占用，占用进程为：${process80}，本次安装结束"
+        colorEcho $RED "==========================================================="
+        exit 1
+    fi
+
+    # 添加临时80端口防火墙规则
+    iptables -I INPUT -p tcp --dport 80 -j ACCEPT
+    iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+
+    # 安装必要工具
+    $CMD_INSTALL socat openssl
+    if [[ "$PMT" = "yum" ]]; then
+        $CMD_INSTALL cronie
+        systemctl start crond
+        systemctl enable crond
+    else
+        $CMD_INSTALL cron
+        systemctl start cron
+        systemctl enable cron
+    fi
+    
+    # 安装acme.sh
+    if [[ ! -d ~/.acme.sh ]]; then
         curl -sL https://get.acme.sh | sh -s email=hijk.pw@protonmail.ch
         source ~/.bashrc
-        ~/.acme.sh/acme.sh --upgrade --auto-upgrade
-        ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-        
-        # 申请证书
-        ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone --debug
-        
-        # 检查证书是否申请成功
-        if [[ ! -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]]; then
-            colorEcho $RED " 获取证书失败，请复制上面的红色文字到 https://hijk.art 反馈"
-            exit 1
-        fi
-        
-        # 安装证书
-        CERT_FILE="/etc/trojan-go/${DOMAIN}.pem"
-        KEY_FILE="/etc/trojan-go/${DOMAIN}.key"
-        mkdir -p /etc/trojan-go
-        ~/.acme.sh/acme.sh --install-cert -d $DOMAIN --ecc \
-            --key-file $KEY_FILE \
-            --fullchain-file $CERT_FILE \
-            --reloadcmd "systemctl restart trojan-go"
-            
-        # 验证证书文件
-        if [[ ! -f $CERT_FILE || ! -f $KEY_FILE ]]; then
-            colorEcho $RED " 证书安装失败，请到 https://hijk.art 反馈"
-            exit 1
-        fi
-        
-        # 恢复防火墙设置
-        iptables -D INPUT -p tcp --dport 80 -j ACCEPT
-        iptables -D INPUT -p tcp --dport 443 -j ACCEPT
-    else
-        cp ~/trojan-go.pem /etc/trojan-go/${DOMAIN}.pem
-        cp ~/trojan-go.key /etc/trojan-go/${DOMAIN}.key
     fi
+    ~/.acme.sh/acme.sh --upgrade --auto-upgrade
+    ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+    
+    # 申请证书
+    colorEcho $BLUE " 正在为域名 $DOMAIN 申请证书..."
+    ~/.acme.sh/acme.sh --issue -d $DOMAIN --standalone
+    
+    # 检查证书是否申请成功
+    if [[ ! -f ~/.acme.sh/${DOMAIN}_ecc/ca.cer ]]; then
+        colorEcho $RED " 获取证书失败，请检查："
+        colorEcho $RED " 1. 域名是否解析到本机IP($IP)"
+        colorEcho $RED " 2. 80端口是否被防火墙阻止"
+        colorEcho $RED " 3. 域名是否已绑定其他服务"
+        exit 1
+    fi
+    
+    # 安装证书
+    mkdir -p /etc/trojan-go
+    ~/.acme.sh/acme.sh --install-cert -d $DOMAIN --ecc \
+        --key-file $KEY_FILE \
+        --fullchain-file $CERT_FILE \
+        --reloadcmd "systemctl restart trojan-go"
+        
+    # 设置证书权限
+    chmod 600 $KEY_FILE
+    
+    # 验证证书文件
+    if [[ ! -f $CERT_FILE || ! -f $KEY_FILE ]]; then
+        colorEcho $RED " 证书安装失败，请检查磁盘空间或权限"
+        exit 1
+    fi
+    
+    # 恢复防火墙设置
+    iptables -D INPUT -p tcp --dport 80 -j ACCEPT
+    iptables -D INPUT -p tcp --dport 443 -j ACCEPT
+    
+    colorEcho $GREEN " 证书申请并安装成功!"
 }
-
 configNginx() {
     mkdir -p /usr/share/nginx/html
     if [[ "$ALLOW_SPIDER" = "n" ]]; then
