@@ -60,32 +60,32 @@ function download_and_run() {
         log "Memory test size: [${memory_test_size}]"
     fi
 
-    local cpu_test="-c 2h"
+    local cpu_test="-c 7h"  # ←←← 修改默认值为 7h
     if [[ "x${cpu_test_interval}" == "x" ]]
     then
-        local cpu_test="-c 2h"
-        log "cpu test interval is empty, set to default value: [2h]"
+        local cpu_test="-c 7h"  # ←←← 修改默认值为 7h
+        log "cpu test interval is empty, set to default value: [7h]"
     elif [[ "x${cpu_test_interval}" == "x0" ]]
     then
-        local cpu_test="-c 2h"
-        log "cpu test can't disable, set to default value: [2h]."
+        local cpu_test="-c 7h"  # ←←← 即使设为 0 也强制用默认值（原逻辑不变）
+        log "cpu test can't disable, set to default value: [7h]."
     else
         local cpu_test="-c ${cpu_test_interval}h"
         log "cpu test interval: [${cpu_test_interval}h]"
     fi
 
-    local network_test="-n 4h"
+    local network_test="-n 11h"  # ←←← 修改默认值为 11h
     if [[ "x${network_test_interval}" == "x" ]]
     then
-        local network_test="-n 4h"
-        log "network test interval is empty, set to default value: [4h]"
+        local network_test="-n 11h"  # ←←← 修改默认值为 11h
+        log "network test interval is empty, set to default value: [11h]"
     elif [[ "x${network_test_interval}" == "x0" ]]
     then
         local network_test=""
-        log "network test diabled."
+        log "network test disabled."
     else
         local network_test="-n ${network_test_interval}h"
-        log "network test interval: ${network_test_interval}"
+        log "network test interval: ${network_test_interval}h"
     fi
 
     log "cmd: ${download_dir}/NeverIdle ${cpu_test} ${mem_test} ${network_test}"
@@ -98,11 +98,12 @@ function download_and_run() {
     log "run 'rm -f ${download_dir}/NeverIdle ${download_dir}/NeverIdle.log' to clean it."
 }
 
+
 function print_help_msg(){
     echo "usage:"
-    echo -e "\t-c \t cpu test interval, defaut: 2h, can't disable."
+    echo -e "\t-c \t cpu test interval, default: 7h, can't disable."
     echo -e "\t-m \t memory test size, value/total memory range: 0/<4 1G/<13 2G/>13, 0 to disable test"
-    echo -e "\t-n \t network test interval, 0 to disable test"
+    echo -e "\t-n \t network test interval, default: 11h, 0 to disable test"
     echo -e "\t-h \t show help info."
     exit 0
 }
